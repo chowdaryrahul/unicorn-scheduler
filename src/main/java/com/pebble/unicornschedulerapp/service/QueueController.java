@@ -1,53 +1,51 @@
 package com.pebble.unicornschedulerapp.service;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
 
 import javax.validation.Valid;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.pebble.unicornschedulerapp.commons.FetchType;
+import com.pebble.unicornschedulerapp.commons.TaskType;
 import com.pebble.unicornschedulerapp.dao.OrderDao;
-import com.pebble.unicornschedulerapp.dto.Greeting;
+import com.pebble.unicornschedulerapp.dto.IndexDTO;
+import com.pebble.unicornschedulerapp.dto.IntervalMessage;
 import com.pebble.unicornschedulerapp.dto.Message;
 import com.pebble.unicornschedulerapp.dto.ResMessage;
-import com.pebble.unicornschedulerapp.dto.TaskType;
 import com.pebble.unicornschedulerapp.entities.Unicorn;
 
 @RestController
 public class QueueController {
 
+	private static final Long maxx = 9223372036854775807L;
+
 	@Autowired
 	OrderDao orderDao;
-
-	private static final String template = "Hello, %s!";
-	private final AtomicLong counter = new AtomicLong();
-
-	@RequestMapping("/greeting")
-	public Greeting greeting(@RequestParam(value = "name", defaultValue = "World") String name) {
-		return new Greeting(counter.incrementAndGet(), String.format(template, name));
-	}
+	
+	@Autowired
+	UnicornPriortizer unicornPriortizer;
 
 	@PostMapping(path = "/order", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
 	public ResMessage receiveOrder(@Valid @RequestBody Message message) {
 
+		
 		long id = message.getId();
 		Date messageTime = message.getTimestamp();
 
 		Unicorn unicorn = orderDao.findUnicornBytaskId(id);
 		
-		if (unicorn == null)
+		if ((id < 1 || id > maxx) || unicorn == null )
 
 		if ((id % 3 == 0) && (id % 5 == 0)) {
 
@@ -78,81 +76,30 @@ public class QueueController {
 			return new ResMessage(unicorn.getTaskId(), "Pass");
 		}
 		else
-			return new ResMessage(0, "Already exists");
+			return new ResMessage(0, "Already exists/ID NOT VALID");
 	}
 
-	@GetMapping(path = "/get", produces = MediaType.APPLICATION_JSON_VALUE)
-	public ResMessage getPriorityTask() {
+	@GetMapping(path = "/retrieve", produces = MediaType.APPLICATION_JSON_VALUE)
+	public @ResponseBody Message getPriorityTask() {
 
 		List<Unicorn> unicornList = orderDao.findAll();
-
-		List<Unicorn> MGMTList = new ArrayList<Unicorn>();
-		List<Unicorn> VIPList = new ArrayList<Unicorn>();
-		List<Unicorn> PRIORList = new ArrayList<Unicorn>();
-		List<Unicorn> NORMALList = new ArrayList<Unicorn>();
-
-		if (unicornList.size() > 0) {
-			for (Unicorn data : unicornList) {
-				if (data.getType().equals(TaskType.MGMT))
-					MGMTList.add(data);
-				if (data.getType().equals(TaskType.VIP))
-					VIPList.add(data);
-				if (data.getType().equals(TaskType.PRIOR))
-					PRIORList.add(data);
-				if (data.getType().equals(TaskType.NORMAL))
-					NORMALList.add(data);
-			}
-		}
 		
-		System.out.println("Normal List Size: " + NORMALList.size());
-
-		if (MGMTList.size() > 0) {
-
-			MGMTList.sort(new Comparator<Unicorn>() {
-				public int compare(Unicorn ob1, Unicorn ob2) {
-					if (ob1.getDatetime().before(ob2.getDatetime())) {
-						return -1;
-					} else if (ob1.getDatetime().after(ob2.getDatetime())) {
-						return 1;
-					} else {
-						return 0;
-					}
-				}
-			});
-
-			return new ResMessage(MGMTList.get(0).getTaskId(), "Fetched");
-		}
+		List<Unicorn> priortizedList = new ArrayList<Unicorn>();
 		
-		List<Unicorn> collectiveList = new ArrayList<>();		
+		Unicorn topTask;
 
-		if (VIPList.size() > 0) {
-			long currentTime = new Date().getTime();
+		if (!unicornList.isEmpty())
+			priortizedList = unicornPriortizer.priortizeQueue(unicornList, FetchType.PRIORITY);
+		
+		if (!priortizedList.isEmpty()) {
+			topTask = priortizedList.get(0);
+
+			orderDao.delete(topTask);			//Dequeue
 			
-			VIPList.forEach( f -> f.setRank((int) Math.floor(Math.max (3, (currentTime - f.getDatetime().getTime()) * Math.log((currentTime - f.getDatetime().getTime()))))));
-			
-			collectiveList.addAll(VIPList);
-		}
-		if (PRIORList.size() > 0) {
-			long currentTime = new Date().getTime();
-			PRIORList.forEach( f -> f.setRank((int) Math.floor(Math.max (3, 2 * ((currentTime - f.getDatetime().getTime())) * Math.log((currentTime - f.getDatetime().getTime()))))));
-			collectiveList.addAll(PRIORList);
-		}
-		if (NORMALList.size() > 0) {			
-			
-			NORMALList.forEach( f -> System.out.println(" " + (new Date().getTime() - f.getDatetime().getTime())));
-			NORMALList.forEach( f -> f.setRank((int) (new Date().getTime() - f.getDatetime().getTime())));
-			collectiveList.addAll(NORMALList);
-		}
-		
-		collectiveList.sort((Unicorn ob1, Unicorn ob2)-> ob2.getRank() - ob1.getRank());
-		
-		System.out.println(collectiveList.toString());
-		
-		if (collectiveList.size() > 0) {
-			return new ResMessage(collectiveList.get(0).getTaskId(), "Fetched");
+			return new Message(topTask.getTaskId(), topTask.getDatetime());
 		}
 
-		return new ResMessage(0, "Nothing Found");
+		return new Message(null, null);
 
 	}
 
@@ -168,11 +115,74 @@ public class QueueController {
 
 	}
 
-	@GetMapping(path = "/get/all", produces = MediaType.APPLICATION_JSON_VALUE)
-	public List<Unicorn> getAllOrders() {
+	@GetMapping(path = "/retrieve/all", produces = MediaType.APPLICATION_JSON_VALUE)
+	public @ResponseBody List<Message> getAllOrders() {
 
-		List<Unicorn> resultSet = orderDao.findAll();
-		resultSet.sort((Unicorn ob1, Unicorn ob2)-> ob1.getRank() - ob2.getRank());
-		return resultSet;
+		List<Unicorn> unicornList = orderDao.findAll();
+		List<Unicorn> priortizedList = new ArrayList<Unicorn>();		
+
+		if (!unicornList.isEmpty())
+			priortizedList = unicornPriortizer.priortizeQueue(unicornList, FetchType.FULL);
+		
+		List<Message> resultList = new ArrayList<Message>();
+		
+		if (!priortizedList.isEmpty()) {
+			for (Unicorn unicorn : priortizedList) {
+				resultList.add(new Message(unicorn.getTaskId(),unicorn.getDatetime()));
+			}
+		}
+			return resultList;
+	}
+	
+	@DeleteMapping(path = "/remove/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
+	public @ResponseBody ResMessage removeOrder(@PathVariable(value = "id", required = true) Long id) {
+		
+		Unicorn unicorn = orderDao.findUnicornBytaskId(id);
+
+		if (unicorn != null) {
+			orderDao.delete(unicorn);
+			return new ResMessage(unicorn.getTaskId(), "DELETED");
+		}else {
+			return new ResMessage(id, "NOT FOUND");
+		}		
+	}
+	
+	@GetMapping(path = "/locate/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
+	public @ResponseBody IndexDTO getTaskLocation(@PathVariable(value = "id", required = true) Long id) {
+
+		
+		Unicorn unicorn = orderDao.findUnicornBytaskId(id);
+		
+		if(unicorn != null) {
+			List<Unicorn> unicornList = orderDao.findAll();
+			List<Unicorn> priortizedList = new ArrayList<Unicorn>();		
+
+			if (!unicornList.isEmpty())
+				priortizedList = unicornPriortizer.priortizeQueue(unicornList, FetchType.FULL);
+			int index = -1;
+			if (!priortizedList.isEmpty()) {
+				index = priortizedList.indexOf(unicorn);
+			}
+			return new IndexDTO((long)(index));
+		}else {
+			return new IndexDTO(-1L);
+		}
+		
+	}
+	
+	@PostMapping(path = "/retrieve/waittime", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+	public @ResponseBody ResMessage getTaskLocation(@RequestBody IntervalMessage message) {
+
+		List<Unicorn> unicornList = orderDao.findAll();
+		
+		Long totalWaitTime = 0L;
+		if(unicornList != null) {
+			for (Unicorn u: unicornList) {
+				totalWaitTime = totalWaitTime + (message.getTimestamp().getTime() - u.getDatetime().getTime());
+			}			
+			return new ResMessage((totalWaitTime / unicornList.size()), "Wait Time Seconds") ;
+		}
+		
+		return new ResMessage(0, "EMPTY");
 	}
 }

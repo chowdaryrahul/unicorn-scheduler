@@ -7,11 +7,11 @@ import javax.validation.constraints.NotNull;
 public class Message {
 
 	@NotNull
-	private final long id;
+	private final Long id;
 	@NotNull
 	private final Date timestamp;
 	
-	public Message(long id, Date timestamp) {
+	public Message(Long id, Date timestamp) {
 		super();
 		this.id = id;
 		this.timestamp = timestamp;
